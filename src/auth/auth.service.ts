@@ -3,6 +3,7 @@
 import {
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -153,5 +154,32 @@ export class AuthService {
     });
 
     return { refreshToken, accessToken };
+  }
+
+  async revokeDevice(
+    callingUserId: string,
+    deviceIdToRevoke: string,
+  ): Promise<void> {
+    // 1. Fetch the Device row by deviceIdToRevoke
+
+    const deviceToRevoke = await this.prisma.device.findUnique({
+      where: { id: deviceIdToRevoke },
+    });
+
+    // 2. If it doesn't exist → reject (which status code, and why — think about the
+    //    leak-vs-hide tradeoff I mentioned: 404 "not found" vs 403 "forbidden")
+    if (!deviceToRevoke) throw new NotFoundException();
+
+    // 3. If it exists but device.userId !== callingUserId → reject
+    //    (same question: 403 or 404 here, and does it need to match your answer to step 2?)
+    if (deviceToRevoke?.userId !== callingUserId) throw new NotFoundException();
+
+    // 4. If it exists and belongs to callingUserId → set revokedAt = now()
+    //    (idempotency check: what should happen if it's already revoked? error, or silently OK?)
+    if (deviceToRevoke.revokedAt) return;
+    await this.prisma.device.update({
+      where: { id: deviceIdToRevoke },
+      data: { revokedAt: new Date() },
+    });
   }
 }
