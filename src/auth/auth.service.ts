@@ -1,6 +1,10 @@
 // auth.service.ts
 
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -12,6 +16,44 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
   ) {}
+
+  // auth.service.ts
+
+  async register(
+    email: string,
+    password: string,
+    firstName: string,
+    lastName: string,
+  ): Promise<{ userId: string }> {
+    // 1. Check if a user with this email already exists
+    //    - what happens if you skip this and rely purely on the DB unique constraint?
+    //    - (think about it, but for now, do the explicit check — better error message)
+    const existingUser = await this.prisma.user.findUnique({
+      where: {
+        email,
+      },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('Email already exists');
+    }
+
+    // 2. Hash the password with argon2 (you already have the import)
+    const hashedPassword = await argon2.hash(password);
+
+    // 3. Create the User row via Prisma
+    const user = await this.prisma.user.create({
+      data: {
+        email,
+        passwordHash: hashedPassword,
+        firstName,
+        lastName,
+      },
+    });
+
+    // 4. Return just enough info to confirm success — NOT tokens, NOT the password hash
+    return { userId: user.id };
+  }
 
   async login(email: string, password: string, deviceName: string) {
     // 1. Find the user by email.
