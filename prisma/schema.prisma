@@ -1,0 +1,65 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id               String     @id @default(uuid())
+  firstName        String
+  lastName         String?
+  email            String     @unique
+  passwordHash     String
+  createdDocuments Document[] @relation("DocumentAuthor")
+  editingDocuments Document[] @relation("DocumentEditors")
+  devices          Device[]
+  deletedAt        DateTime?
+}
+
+model Document {
+  id          String             @id @default(uuid())
+  name        String
+  description String
+  createdById String
+  createdBy   User               @relation("DocumentAuthor", fields: [createdById], references: [id])
+  editors     User[]             @relation("DocumentEditors")
+  documentOps DocumentOp[]
+  snapshots   DocumentSnapshot[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+}
+
+model Device {
+  id               String    @id @default(uuid())
+  deviceName       String
+  refreshTokenHash String
+  revokedAt        DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id])
+}
+
+model DocumentOp {
+  id         String   @id @default(uuid())
+  update     Bytes
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id])
+  createdAt  DateTime @default(now())
+}
+
+model DocumentSnapshot {
+  id         String   @id @default(uuid())
+  stateBytes Bytes
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id])
+  createdAt  DateTime @default(now())
+}
