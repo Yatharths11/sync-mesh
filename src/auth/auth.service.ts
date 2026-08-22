@@ -105,4 +105,53 @@ export class AuthService {
     //    never the hash.
     return { accessToken, refreshToken };
   }
+
+  async refresh(
+    deviceId: string,
+    presentedRefreshToken: string,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    // 1. Look up the Device row directly by deviceId (primary key lookup — no hash involved)
+    const device = await this.prisma.device.findUnique({
+      where: { id: deviceId },
+    });
+
+    // 2. If no device found → reject (401)
+    if (!device) throw new UnauthorizedException();
+
+    // 3. If device found but device.revokedAt is already set → this is the reuse/already-dead case.
+    //    Reject. (Row is already revoked, nothing more to do — it's already dead.)
+    if (device.revokedAt) throw new UnauthorizedException();
+
+    // 4. Verify: does argon2.verify(device.refreshTokenHash, presentedRefreshToken) return true?
+    //    - If FALSE → this is your reuse-detection trigger. The device row exists, isn't
+    //      already revoked, but the presented token doesn't match the current hash.
+    //      This is the "someone replayed a stale token" case. What do you do to the
+    //      Device row here, specifically?
+    //    - If TRUE → happy path. Generate new raw refresh token, hash it, overwrite
+    //      refreshTokenHash. Sign new access token. Return both.
+    if (
+      !(await argon2.verify(device.refreshTokenHash, presentedRefreshToken))
+    ) {
+      await this.prisma.device.update({
+        where: { id: device.id },
+        data: { revokedAt: new Date() },
+      });
+
+      throw new UnauthorizedException();
+    }
+    const refreshToken = randomBytes(32).toString('hex');
+    const accessToken = await this.jwtService.signAsync({
+      userId: device.userId,
+      deviceId: device.id,
+    });
+
+    const hashedRefreshToken = await argon2.hash(refreshToken);
+
+    await this.prisma.device.update({
+      where: { id: device.id },
+      data: { refreshTokenHash: hashedRefreshToken },
+    });
+
+    return { refreshToken, accessToken };
+  }
 }
