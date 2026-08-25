@@ -16,6 +16,7 @@ import { PrismaModule } from './prisma/prisma.module';
       isGlobal: true,
     }),
     PrismaModule,
+    SyncModule,
   ],
   controllers: [AppController],
   providers: [AppService],
