@@ -26,17 +26,15 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private prisma: PrismaService,
   ) {}
 
-  handleConnection(client: Socket) {
+  async handleConnection(client: Socket) {
     const authorizationToken = client.handshake.headers.authorization;
     const accessToken = authorizationToken?.split(' ')?.[1];
 
     if (!accessToken) return client.disconnect();
 
     try {
-      const { userId, deviceId } = this.jwtService.verify<AccessTokenPayload>(
-        accessToken,
-        {},
-      );
+      const { userId, deviceId } =
+        await this.jwtService.verifyAsync<AccessTokenPayload>(accessToken, {});
       client.data.userId = userId;
       client.data.deviceId = deviceId;
     } catch {
@@ -85,7 +83,7 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     if (!document) {
-      client.emit('unauthorized', 'You are not');
+      client.emit('unauthorized', 'You do not have access to this document');
       return;
     }
 
