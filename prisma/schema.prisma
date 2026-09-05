@@ -54,6 +54,8 @@ model DocumentOp {
   documentId String
   document   Document @relation(fields: [documentId], references: [id])
   createdAt  DateTime @default(now())
+  seq        BigInt @default(autoincrement())
+  @@index([documentId, seq])
 }
 
 model DocumentSnapshot {
