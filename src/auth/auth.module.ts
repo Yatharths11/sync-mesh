@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { RealtimeNotifierModule } from './../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -18,8 +19,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
         ) as `${number}${'s' | 'm' | 'h' | 'd'}`,
       }),
     }),
+    RealtimeNotifierModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, RealtimeNotifierModule],
 })
 export class AuthModule {}

@@ -6,6 +6,8 @@ import { DocumentsModule } from './documents/documents.module';
 import { SyncModule } from './sync/sync.module';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
+import { RedisModule } from './redis/redis.module';
+import { RealtimeNotifierModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -17,6 +19,8 @@ import { PrismaModule } from './prisma/prisma.module';
     }),
     PrismaModule,
     SyncModule,
+    RedisModule,
+    RealtimeNotifierModule,
   ],
   controllers: [AppController],
   providers: [AppService],

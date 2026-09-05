@@ -10,7 +10,10 @@ import {
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from 'prisma/prisma.service';
-import { UnauthorizedException } from '@nestjs/common';
+import { Inject, OnModuleInit } from '@nestjs/common';
+import { REDIS_SUB_CLIENT } from 'src/redis/redis.provider';
+import Redis from 'ioredis';
+import { DEVICE_REVOKED_CHANNEL } from './../realtime/realtime-notified.service';
 
 interface AccessTokenPayload {
   userId: string;
@@ -18,13 +21,41 @@ interface AccessTokenPayload {
 }
 
 @WebSocketGateway({ cors: { origin: '*' } })
-export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class SyncGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
+{
   @WebSocketServer() server: Server;
+  private deviceSocketMap = new Map<string, Socket>();
 
   constructor(
+    @Inject(REDIS_SUB_CLIENT) private readonly subClient: Redis,
     private readonly jwtService: JwtService,
     private prisma: PrismaService,
   ) {}
+
+  async onModuleInit() {
+    // TODO (Step 4):
+    // 1. this.subClient.subscribe(DEVICE_REVOKED_CHANNEL)
+
+    await this.subClient.subscribe(DEVICE_REVOKED_CHANNEL);
+    console.log('Subscribed to channel:', DEVICE_REVOKED_CHANNEL);
+
+    this.subClient.on('error', (err) =>
+      console.error('Redis sub client error:', err),
+    );
+
+    // 2. this.subClient.on('message', (channel, message) => { ... })
+    //    Inside the callback (Step 5):
+    //    - message IS the deviceId (you published a raw string, remember)
+    //    - look it up in this.deviceSocketMap
+    //    - if found, disconnect it
+    this.subClient.on('message', (channel, message) => {
+      const socket = this.deviceSocketMap.get(message);
+      if (socket) {
+        socket.disconnect(true);
+      }
+    });
+  }
 
   async handleConnection(client: Socket) {
     const authorizationToken = client.handshake.headers.authorization;
@@ -33,11 +64,20 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!accessToken) return client.disconnect();
 
     try {
-      const { userId, deviceId } =
-        await this.jwtService.verifyAsync<AccessTokenPayload>(accessToken, {});
+      const result = await this.jwtService.verifyAsync<AccessTokenPayload>(
+        accessToken,
+        {
+          secret: process.env.JWT_SECRET,
+        },
+      );
+
+      const { userId, deviceId } = result;
       client.data.userId = userId;
       client.data.deviceId = deviceId;
-    } catch {
+      this.deviceSocketMap.set(deviceId, client);
+    } catch (error) {
+      console.log('disconnecting', error);
+
       client.disconnect();
     }
   }
@@ -45,6 +85,7 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleDisconnect(client: Socket) {
     // Nothing to do here for room cleanup — why? (you already answered this above)
     // This hook is still useful for things like presence/logging later.
+    this.deviceSocketMap.delete(client.data.deviceId);
   }
 
   @SubscribeMessage('join-room')
@@ -91,7 +132,7 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect {
     //         (you'll need to know DocumentOp's exact field names — check schema.prisma)
     const documentOp = await this.prisma.documentOp.create({
       data: {
-        update: data.update,
+        update: new Uint8Array(data.update),
         documentId: data.documentId,
         createdAt: new Date(),
       },

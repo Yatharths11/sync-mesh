@@ -10,12 +10,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { randomBytes } from 'node:crypto';
+import { RealtimeNotifierService } from './../realtime/realtime-notified.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private realTimeNotified: RealtimeNotifierService,
   ) {}
 
   // auth.service.ts
@@ -180,6 +182,12 @@ export class AuthService {
     await this.prisma.device.update({
       where: { id: deviceIdToRevoke },
       data: { revokedAt: new Date() },
+    });
+    this.realTimeNotified.notifyDeviceRevoked(deviceIdToRevoke).catch((err) => {
+      console.error(
+        `Failed to publish device-revoked event for ${deviceIdToRevoke}`,
+        err,
+      );
     });
   }
 }

@@ -9,11 +9,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET'),
+      secretOrKey: configService.getOrThrow<string>('JWT_SECRET'),
     });
   }
 
-  async validate(payload: { userId: string; deviceId: string }) {
+  validate(payload: { userId: string; deviceId: string }) {
     // this only runs AFTER Passport has already verified signature + expiry.
     // whatever you return here becomes req.user.
     return { userId: payload.userId, deviceId: payload.deviceId };
