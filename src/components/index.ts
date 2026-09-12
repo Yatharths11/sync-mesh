@@ -1,0 +1,1 @@
+export * from './collaborative-text-input/collaborative-text-input.component'
