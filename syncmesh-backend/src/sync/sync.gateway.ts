@@ -76,6 +76,13 @@ export class SyncGateway
       const { userId, deviceId } = result;
       client.data.userId = userId;
       client.data.deviceId = deviceId;
+
+      const existingSocket = this.deviceSocketMap.get(deviceId);
+
+      if (existingSocket) {
+        existingSocket.disconnect(true);
+      }
+
       this.deviceSocketMap.set(deviceId, client);
     } catch (error) {
       console.log('disconnecting', error);
@@ -87,7 +94,11 @@ export class SyncGateway
   handleDisconnect(client: Socket) {
     // Nothing to do here for room cleanup — why? (you already answered this above)
     // This hook is still useful for things like presence/logging later.
-    this.deviceSocketMap.delete(client.data.deviceId);
+
+    const deviceId = client?.data?.deviceId;
+    if (client === this.deviceSocketMap.get(deviceId)) {
+      this.deviceSocketMap.delete(client.data.deviceId);
+    }
   }
 
   @SubscribeMessage('join-room')
