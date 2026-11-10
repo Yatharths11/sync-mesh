@@ -18,6 +18,9 @@ import {
   DEVICE_REVOKED_CHANNEL,
   DOC_UPDATE_CHANNEL_PREFIX,
   DocUpdatePayload,
+  PRESENCE_CHANNEL_PREFIX,
+  PresencePayload,
+  PresenceUser,
   RealtimeNotifierService,
 } from './../realtime/realtime-notified.service';
 import { UUID } from 'node:crypto';
@@ -89,6 +92,9 @@ export class SyncGateway
     await this.subClient.psubscribe(`${DOC_UPDATE_CHANNEL_PREFIX}*`);
     console.log('Subscribed to pattern:', `${DOC_UPDATE_CHANNEL_PREFIX}*`);
 
+    await this.subClient.psubscribe(`${PRESENCE_CHANNEL_PREFIX}*`);
+    console.log('Subscribed to pattern:', `${PRESENCE_CHANNEL_PREFIX}*`);
+
     this.subClient.on('error', (err) =>
       console.error('Redis sub client error:', err),
     );
@@ -120,6 +126,14 @@ export class SyncGateway
           .to(documentId)
           .except(senderSocketId)
           .emit('sync-update', update);
+        return;
+      }
+
+      // Presence fan-out: every instance re-emits the current viewer list to
+      // its own locally-connected sockets in that document's room.
+      if (channel.startsWith(PRESENCE_CHANNEL_PREFIX)) {
+        const payload = JSON.parse(message) as PresencePayload;
+        this.server.to(payload.documentId).emit('presence', payload);
       }
     });
   }
@@ -156,7 +170,7 @@ export class SyncGateway
     }
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     // Nothing to do here for room cleanup — why? (you already answered this above)
     // This hook is still useful for things like presence/logging later.
 
@@ -164,6 +178,8 @@ export class SyncGateway
     if (client === this.deviceSocketMap.get(deviceId)) {
       this.deviceSocketMap.delete(client.data.deviceId);
     }
+
+    await this.removePresence(client);
   }
 
   @SubscribeMessage('join-room')
@@ -184,6 +200,33 @@ export class SyncGateway
     }
 
     await client.join(data.documentId);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { firstName: true, lastName: true },
+    });
+    if (!user) return;
+
+    await this.pubClient.hset(
+      `${PRESENCE_CHANNEL_PREFIX}${data.documentId}`,
+      client.id,
+      JSON.stringify({
+        userId,
+        socketId: client.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+      }),
+    );
+
+    const joinedDocumentIds: Set<string> = (client.data.presenceDocumentIds ??=
+      new Set<string>());
+    joinedDocumentIds.add(data.documentId);
+
+    // Fan out to every other connected client via Redis (cross-instance, same
+    // pattern as doc:* sync-update), and ack the joining client directly so
+    // it doesn't have to wait on its own pub/sub round-trip.
+    const users = await this.publishPresence(data.documentId);
+    client.emit('presence', { documentId: data.documentId, users });
   }
 
   @SubscribeMessage('sync-update')
@@ -231,6 +274,49 @@ export class SyncGateway
     });
 
     await this.maybeSnapshotDocument(data.documentId);
+  }
+
+  // Reads the current viewer list for a document out of the presence hash
+  // and publishes it on presence:<documentId> (cross-instance, same pattern
+  // as doc:* sync-update), which the pmessage handler re-emits to the room.
+  private async publishPresence(documentId: string): Promise<PresenceUser[]> {
+    const raw = await this.pubClient.hgetall(
+      `${PRESENCE_CHANNEL_PREFIX}${documentId}`,
+    );
+    const users: PresenceUser[] = Object.values(raw).map((entry) => {
+      const { userId, firstName, lastName } = JSON.parse(entry);
+      return { userId, firstName, lastName };
+    });
+
+    await this.realtimeNotifier.notifyPresenceUpdate(documentId, {
+      documentId,
+      users,
+    });
+
+    return users;
+  }
+
+  // Removes this socket's presence entry from every document it had joined
+  // (crashed/closed client cleanup) and re-broadcasts the updated list for
+  // each. Never throws — presence cleanup must not break disconnect handling.
+  private async removePresence(client: Socket): Promise<void> {
+    const documentIds: Set<string> | undefined =
+      client.data.presenceDocumentIds;
+    if (!documentIds) return;
+
+    await Promise.all(
+      [...documentIds].map(async (documentId) => {
+        try {
+          await this.pubClient.hdel(
+            `${PRESENCE_CHANNEL_PREFIX}${documentId}`,
+            client.id,
+          );
+          await this.publishPresence(documentId);
+        } catch (error) {
+          console.error('presence cleanup failed for', documentId, error);
+        }
+      }),
+    );
   }
 
   // Token bucket per (userId, documentId): true if this op may proceed.
