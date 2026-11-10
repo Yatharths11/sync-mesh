@@ -34,7 +34,7 @@ export default function LoginScreen() {
     mutationKey: ['login'],
     onSuccess: async data => {
       try {
-        await Keychain.setGenericPassword('refreshToken', data.refreshToken, {
+        await Keychain.setGenericPassword(data.deviceId, data.refreshToken, {
           service: 'refreshToken',
         });
         setAccessToken(data.accessToken);
