@@ -23,6 +23,13 @@ function initDb(): void {
 			lastSeenSeq INTEGER NOT NULL DEFAULT 0
 		);
 	`);
+
+  db.execute(`
+		CREATE TABLE IF NOT EXISTS app_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
+	`);
 }
 
 export { db, initDb };
