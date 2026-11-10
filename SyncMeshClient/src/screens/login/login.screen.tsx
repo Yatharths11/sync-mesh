@@ -13,6 +13,7 @@ import DeviceInfo from 'react-native-device-info';
 import { login } from '../../apis/auth.api';
 import * as Keychain from 'react-native-keychain';
 import { useAuthStore } from '../../store/store';
+import { useTheme } from '../../theme';
 
 // UI-ONLY SCREEN. No auth logic lives here.
 // Yatharth: implement handleSubmit yourself — this is where you'll:
@@ -23,6 +24,8 @@ import { useAuthStore } from '../../store/store';
 //   5. On failure, setError(...) with a user-facing message
 
 export default function LoginScreen() {
+  const { colors, spacing, radius, typography } = useTheme();
+  const styles = createStyles(colors, spacing, radius, typography);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -64,7 +67,7 @@ export default function LoginScreen() {
       <TextInput
         style={styles.input}
         placeholder="Email"
-        placeholderTextColor="#8A8A8E"
+        placeholderTextColor={colors.placeholder}
         autoCapitalize="none"
         keyboardType="email-address"
         value={email}
@@ -75,7 +78,7 @@ export default function LoginScreen() {
       <TextInput
         style={styles.input}
         placeholder="Password"
-        placeholderTextColor="#8A8A8E"
+        placeholderTextColor={colors.placeholder}
         secureTextEntry
         value={password}
         onChangeText={setPassword}
@@ -91,7 +94,7 @@ export default function LoginScreen() {
         disabled={loginMutation.isPending}
       >
         {loginMutation.isPending ? (
-          <ActivityIndicator color="#FFFFFF" />
+          <ActivityIndicator color={colors.accentText} />
         ) : (
           <Text style={styles.buttonText}>Log In</Text>
         )}
@@ -100,53 +103,62 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    backgroundColor: '#FFFFFF',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 15,
-    color: '#6B6B70',
-    textAlign: 'center',
-    marginBottom: 32,
-  },
-  errorText: {
-    color: '#D92D20',
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#D9D9DE',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    marginBottom: 14,
-  },
-  button: {
-    backgroundColor: '#1A1A1E',
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-});
+function createStyles(
+  colors: ReturnType<typeof useTheme>['colors'],
+  spacing: ReturnType<typeof useTheme>['spacing'],
+  radius: ReturnType<typeof useTheme>['radius'],
+  typography: ReturnType<typeof useTheme>['typography'],
+) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.lg,
+      backgroundColor: colors.background,
+    },
+    title: {
+      ...typography.title,
+      textAlign: 'center',
+      color: colors.textPrimary,
+      marginBottom: spacing.xs,
+    },
+    subtitle: {
+      ...typography.body,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginBottom: spacing.xl,
+    },
+    errorText: {
+      ...typography.caption,
+      color: colors.danger,
+      textAlign: 'center',
+      marginBottom: spacing.md,
+    },
+    input: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.sm,
+      backgroundColor: colors.surface,
+      color: colors.textPrimary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm + 4,
+      fontSize: typography.body.fontSize,
+      marginBottom: spacing.sm + 6,
+    },
+    button: {
+      backgroundColor: colors.accent,
+      borderRadius: radius.sm,
+      paddingVertical: spacing.md,
+      alignItems: 'center',
+      marginTop: spacing.sm,
+    },
+    buttonDisabled: {
+      opacity: 0.6,
+    },
+    buttonText: {
+      ...typography.body,
+      color: colors.accentText,
+      fontWeight: '600',
+    },
+  });
+}
