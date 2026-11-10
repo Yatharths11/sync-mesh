@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { io } from 'socket.io-client';
 import * as Y from 'yjs';
@@ -168,8 +169,12 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
   }, [documentId, accessToken, ydoc]);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.statusBar}>
+    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.statusBar}>
         <View style={styles.avatarRow}>
           {presentUsers.map(user => (
             <View
@@ -199,9 +204,10 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
             {connected ? 'Connected' : 'Offline'}
           </Text>
         </View>
-      </View>
-      <CollaborativeTextInput ydoc={ydoc} props={{ style: { flex: 1 } }} />
-    </View>
+        </View>
+        <CollaborativeTextInput ydoc={ydoc} props={{ style: { flex: 1 } }} />
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -210,6 +216,10 @@ function createStyles(
   spacing: ReturnType<typeof useTheme>['spacing'],
 ) {
   return StyleSheet.create({
+    safeArea: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
     container: {
       flex: 1,
       backgroundColor: colors.background,
