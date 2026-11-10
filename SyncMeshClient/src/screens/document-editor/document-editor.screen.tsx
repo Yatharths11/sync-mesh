@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, Text, StyleSheet, Platform, KeyboardAvoidingView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { io } from 'socket.io-client';
@@ -60,9 +60,22 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
   const [presentUsers, setPresentUsers] = useState<PresenceUser[]>([]);
   const [connected, setConnected] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const drainRef = useRef<() => void>(() => {});
+
+  const handleSave = () => {
+    drainRef.current();
+    navigation.goBack();
+  };
 
   useEffect(() => {
-    navigation.setOptions({ title: 'Document' });
+    navigation.setOptions({
+      title: 'Document',
+      headerRight: () => (
+        <TouchableOpacity onPress={handleSave} activeOpacity={0.7} style={styles.saveButton}>
+          <Text style={styles.saveButtonText}>Save</Text>
+        </TouchableOpacity>
+      ),
+    });
   }, [navigation]);
 
   useEffect(() => () => ydoc.destroy(), [ydoc]);
@@ -105,6 +118,7 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
         refreshPendingCount();
       });
     };
+    drainRef.current = drainPendingOps;
 
     // Catches this device up on ops it missed while offline, paginated by
     // server sequence number, then drains anything still queued locally.
@@ -278,6 +292,15 @@ function createStyles(
     statusLabel: {
       color: colors.textSecondary,
       fontSize: 12,
+    },
+    saveButton: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    saveButtonText: {
+      color: colors.accent,
+      fontSize: 16,
+      fontWeight: '600',
     },
   });
 }
