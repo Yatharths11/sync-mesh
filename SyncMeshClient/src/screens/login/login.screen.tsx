@@ -8,6 +8,7 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  View,
 } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import { login } from '../../apis/auth.api';
@@ -64,41 +65,44 @@ export default function LoginScreen() {
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        placeholderTextColor={colors.placeholder}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-        editable={!loginMutation.isPending}
-      />
+      <View style={styles.card}>
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          placeholderTextColor={colors.placeholder}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+          editable={!loginMutation.isPending}
+        />
 
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        placeholderTextColor={colors.placeholder}
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-        editable={!loginMutation.isPending}
-      />
+        <TextInput
+          style={styles.input}
+          placeholder="Password"
+          placeholderTextColor={colors.placeholder}
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+          editable={!loginMutation.isPending}
+        />
 
-      <TouchableOpacity
-        style={[
-          styles.button,
-          loginMutation.isPending && styles.buttonDisabled,
-        ]}
-        onPress={handleSubmit}
-        disabled={loginMutation.isPending}
-      >
-        {loginMutation.isPending ? (
-          <ActivityIndicator color={colors.accentText} />
-        ) : (
-          <Text style={styles.buttonText}>Log In</Text>
-        )}
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.button,
+            loginMutation.isPending && styles.buttonDisabled,
+          ]}
+          onPress={handleSubmit}
+          disabled={loginMutation.isPending}
+          activeOpacity={0.75}
+        >
+          {loginMutation.isPending ? (
+            <ActivityIndicator color={colors.accentText} />
+          ) : (
+            <Text style={styles.buttonText}>Log In</Text>
+          )}
+        </TouchableOpacity>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -134,11 +138,21 @@ function createStyles(
       textAlign: 'center',
       marginBottom: spacing.md,
     },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      padding: spacing.lg,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 6,
+      elevation: 3,
+    },
     input: {
       borderWidth: 1,
       borderColor: colors.border,
       borderRadius: radius.sm,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.background,
       color: colors.textPrimary,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm + 4,
