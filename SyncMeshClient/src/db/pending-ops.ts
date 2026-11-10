@@ -1,12 +1,14 @@
 import { db } from './index';
+import { v4 as uuidv4 } from 'uuid';
+
 /**
  * Inserts a new pending op for a document.
  * Called every time a local edit produces a new Yjs update to queue.
  */
 export function insertOp(documentId: string, content: Uint8Array): void {
   db.executeSync(
-    'INSERT INTO pending_ops (documentId, content, createdAt) VALUES (?, ?, ?)',
-    [documentId, content, Date.now()],
+    'INSERT INTO pending_ops (documentId, content, createdAt, opId) VALUES (?, ?, ?, ?)',
+    [documentId, content, Date.now(), uuidv4()],
   );
 }
 
@@ -16,14 +18,15 @@ export function insertOp(documentId: string, content: Uint8Array): void {
  */
 export function getPendingOps(
   documentId: string,
-): Array<{ id: number; content: Uint8Array; createdAt: number }> {
+): Array<{ id: number; opId: string; content: Uint8Array; createdAt: number }> {
   const { rows } = db.executeSync(
-    'SELECT id, content, createdAt FROM pending_ops WHERE documentId = ? ORDER BY id',
+    'SELECT id, opId, content, createdAt FROM pending_ops WHERE documentId = ? ORDER BY id',
     [documentId],
   );
 
   return rows.map(row => ({
     id: row.id as number,
+    opId: row.opId as string,
     // op-sqlite hands BLOBs back as ArrayBuffer
     content: new Uint8Array(row.content as ArrayBuffer),
     createdAt: row.createdAt as number,
