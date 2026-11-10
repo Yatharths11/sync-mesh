@@ -39,6 +39,7 @@ export function CollaborativeTextInput({
       value={value}
       onChangeText={handleChangeText}
       multiline
+      autoFocus
       style={[
         { ...typography.editor, color: colors.textPrimary, backgroundColor: colors.background },
         styleOverride,
