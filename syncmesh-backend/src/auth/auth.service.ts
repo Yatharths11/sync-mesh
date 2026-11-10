@@ -106,13 +106,13 @@ export class AuthService {
 
     // 7. Return { accessToken, refreshToken } — refreshToken is the RAW one from step 3,
     //    never the hash.
-    return { accessToken, refreshToken };
+    return { accessToken, refreshToken, deviceId: device.id };
   }
 
   async refresh(
     deviceId: string,
     presentedRefreshToken: string,
-  ): Promise<{ accessToken: string; refreshToken: string }> {
+  ): Promise<{ accessToken: string; refreshToken: string; deviceId: string }> {
     // 1. Look up the Device row directly by deviceId (primary key lookup — no hash involved)
     const device = await this.prisma.device.findUnique({
       where: { id: deviceId },
@@ -155,7 +155,19 @@ export class AuthService {
       data: { refreshTokenHash: hashedRefreshToken },
     });
 
-    return { refreshToken, accessToken };
+    return { refreshToken, accessToken, deviceId: device.id };
+  }
+
+  async listDevices(userId: string) {
+    return this.prisma.device.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        deviceName: true,
+        lastLoginAt: true,
+        revokedAt: true,
+      },
+    });
   }
 
   async revokeDevice(
