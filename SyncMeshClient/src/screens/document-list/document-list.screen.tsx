@@ -6,14 +6,17 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
+  RefreshControl,
   StyleSheet,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../../App';
 import { listDocuments, createDocument } from '../../apis/documents.api';
 import { useAuthStore } from '../../store/store';
 import { useTheme } from '../../theme';
+import { ThemeToggle } from '../../components/theme-toggle/theme-toggle.component';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'DocumentList'>;
 
@@ -26,12 +29,16 @@ export default function DocumentListScreen({ navigation }: Props) {
   const [name, setName] = useState('');
 
   useEffect(() => {
-    navigation.setOptions({ title: 'Documents' });
+    navigation.setOptions({
+      title: 'Documents',
+      headerRight: () => <ThemeToggle />,
+    });
   }, [navigation]);
 
   const {
     data: documents,
     isLoading,
+    isFetching,
     refetch,
   } = useQuery({
     queryKey: ['documents'],
@@ -47,7 +54,7 @@ export default function DocumentListScreen({ navigation }: Props) {
   });
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['bottom']}>
       <View style={styles.form}>
         <TextInput
           style={styles.input}
@@ -79,6 +86,13 @@ export default function DocumentListScreen({ navigation }: Props) {
           data={documents as DocumentSummary[] | undefined}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={isFetching}
+              onRefresh={() => void refetch()}
+              tintColor={colors.accent}
+            />
+          }
           ListEmptyComponent={
             <Text style={styles.emptyText}>
               No documents yet — create one to get started
@@ -96,7 +110,7 @@ export default function DocumentListScreen({ navigation }: Props) {
           )}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -160,6 +174,11 @@ function createStyles(
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.md,
       marginBottom: spacing.sm,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.1,
+      shadowRadius: 3,
+      elevation: 2,
     },
     cardTitle: {
       ...typography.body,
