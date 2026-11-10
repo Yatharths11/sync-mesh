@@ -10,7 +10,6 @@ import { useAuthStore, useDeviceId } from './src/store/store';
 import { refresh } from './src/apis/auth.api';
 import Keychain from 'react-native-keychain';
 import { SplashScreen } from './src/screens/splash/splash.screen';
-import { getOrCreateDeviceId } from './src/functions';
 
 export type RootStackParamList = {
   DocumentList: undefined;
@@ -29,17 +28,17 @@ export default function App() {
 
   useEffect(() => {
     const hydrateApp = async () => {
-      const deviceId = await getOrCreateDeviceId();
       const credentials = await Keychain.getGenericPassword({
         service: 'refreshToken',
       });
 
-      if(deviceId) setDeviceId(deviceId)
-
-      if (!credentials || !deviceId) {
+      if (!credentials) {
         setIsLoading(false);
         return;
       }
+
+      const deviceId = credentials.username;
+      setDeviceId(deviceId);
 
       try {
         const data = await refresh(deviceId, credentials.password);
