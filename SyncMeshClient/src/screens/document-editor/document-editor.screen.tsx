@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { io } from 'socket.io-client';
 import * as Y from 'yjs';
@@ -8,6 +8,7 @@ import { CollaborativeTextInput } from '../../components';
 import { useAuthStore } from '../../store/store';
 import { deleteOp, getPendingOps, insertOp } from '../../db/pending-ops';
 import { getLastSeenSeq, setLastSeenSeq } from '../../db/sync-state';
+import { useTheme } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Editor'>;
 
@@ -20,6 +21,21 @@ type PullResult = {
 type PushResult = {
   success: { id: string }[];
 };
+
+type PresenceUser = { userId: string; firstName: string; lastName: string | null };
+type PresencePayload = { documentId: string; users: PresenceUser[] };
+
+// Stable-per-user color pick from theme.avatarPalette -- simple char-code hash
+// so the same userId always lands on the same color across re-renders.
+function avatarColorFor(userId: string, palette: readonly string[]): string {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) hash += userId.charCodeAt(i);
+  return palette[hash % palette.length];
+}
+
+function initialsFor(user: PresenceUser): string {
+  return `${user.firstName[0] ?? ''}${user.lastName?.[0] ?? ''}`.toUpperCase();
+}
 
 // Bytes fields (snapshot/op update) come back over the socket as whatever
 // shape socket.io reconstructs binary data into (ArrayBuffer, a plain
@@ -35,9 +51,14 @@ function toUint8Array(value: unknown): Uint8Array {
 
 export default function EditorScreen({ route, navigation }: Readonly<Props>) {
   const { documentId } = route.params;
+  const { colors, spacing } = useTheme();
+  const styles = createStyles(colors, spacing);
   const accessToken = useAuthStore(state => state.accessToken)!;
   const ydoc = useMemo(() => new Y.Doc(), [documentId]);
   const isDrainingRef = useRef(false);
+  const [presentUsers, setPresentUsers] = useState<PresenceUser[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
     navigation.setOptions({ title: 'Document' });
@@ -50,6 +71,10 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
       transports: ['websocket'],
       extraHeaders: { Authorization: `Bearer ${accessToken}` },
     });
+
+    const refreshPendingCount = () =>
+      setPendingCount(getPendingOps(documentId).length);
+    refreshPendingCount();
 
     // Pushes everything queued in pending_ops for this document. Idempotent
     // on the server (a duplicate id comes back as success), so safe to call
@@ -76,6 +101,7 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
           if (pushedIds.has(op.opId)) deleteOp(op.id);
         }
         isDrainingRef.current = false;
+        refreshPendingCount();
       });
     };
 
@@ -94,6 +120,7 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
           seq = Number(op.seq);
         }
         setLastSeenSeq(documentId, seq);
+        refreshPendingCount();
 
         if (result.hasMore) {
           pullAndDrain(seq);
@@ -104,9 +131,17 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
     };
 
     socket.on('connect', () => {
+      setConnected(true);
       socket.emit('join-room', { documentId });
       pullAndDrain();
     });
+    socket.on('disconnect', () => setConnected(false));
+
+    const handlePresence = (payload: PresencePayload) => {
+      if (payload.documentId !== documentId) return;
+      setPresentUsers(payload.users);
+    };
+    socket.on('presence', handlePresence);
 
     const handleRemoteUpdate = (update: number[]) => {
       Y.applyUpdate(ydoc, new Uint8Array(update), 'remote');
@@ -120,6 +155,7 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
       // offline edit (or one whose live emit never lands) still reaches the
       // server once connectivity returns.
       insertOp(documentId, update);
+      refreshPendingCount();
       socket.emit('sync-update', { documentId, update: Array.from(update) });
       if (socket.connected) drainPendingOps();
     };
@@ -133,14 +169,105 @@ export default function EditorScreen({ route, navigation }: Readonly<Props>) {
 
   return (
     <View style={styles.container}>
+      <View style={styles.statusBar}>
+        <View style={styles.avatarRow}>
+          {presentUsers.map(user => (
+            <View
+              key={user.userId}
+              style={[
+                styles.avatar,
+                { backgroundColor: avatarColorFor(user.userId, colors.avatarPalette) },
+              ]}
+            >
+              <Text style={styles.avatarText}>{initialsFor(user)}</Text>
+            </View>
+          ))}
+        </View>
+        <View style={styles.syncStatus}>
+          {pendingCount > 0 && (
+            <View style={styles.pendingBadge}>
+              <Text style={styles.pendingBadgeText}>{pendingCount}</Text>
+            </View>
+          )}
+          <View
+            style={[
+              styles.statusDot,
+              { backgroundColor: connected ? colors.success : colors.danger },
+            ]}
+          />
+          <Text style={styles.statusLabel}>
+            {connected ? 'Connected' : 'Offline'}
+          </Text>
+        </View>
+      </View>
       <CollaborativeTextInput ydoc={ydoc} props={{ style: { flex: 1 } }} />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 16,
-  },
-});
+function createStyles(
+  colors: ReturnType<typeof useTheme>['colors'],
+  spacing: ReturnType<typeof useTheme>['spacing'],
+) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+      padding: spacing.md,
+    },
+    statusBar: {
+      height: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      marginBottom: spacing.sm,
+    },
+    avatarRow: {
+      flexDirection: 'row',
+    },
+    avatar: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: spacing.xs,
+    },
+    avatarText: {
+      color: colors.accentText,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    syncStatus: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    pendingBadge: {
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      paddingHorizontal: 4,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.border,
+      marginRight: spacing.xs,
+    },
+    pendingBadgeText: {
+      color: colors.textPrimary,
+      fontSize: 11,
+      fontWeight: '600',
+    },
+    statusDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      marginRight: spacing.xs,
+    },
+    statusLabel: {
+      color: colors.textSecondary,
+      fontSize: 12,
+    },
+  });
+}
