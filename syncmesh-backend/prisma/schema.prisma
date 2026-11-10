@@ -64,4 +64,6 @@ model DocumentSnapshot {
   documentId String
   document   Document @relation(fields: [documentId], references: [id])
   createdAt  DateTime @default(now())
+  seq        BigInt
+  @@index([documentId, seq])
 }
