@@ -11,9 +11,18 @@ import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from 'prisma/prisma.service';
 import { Inject, OnModuleInit } from '@nestjs/common';
-import { REDIS_SUB_CLIENT } from 'src/redis/redis.provider';
+import { REDIS_PUB_CLIENT, REDIS_SUB_CLIENT } from 'src/redis/redis.provider';
 import Redis from 'ioredis';
-import { DEVICE_REVOKED_CHANNEL } from './../realtime/realtime-notified.service';
+import { Doc, applyUpdate, encodeStateAsUpdate } from 'yjs';
+import {
+  DEVICE_REVOKED_CHANNEL,
+  DOC_UPDATE_CHANNEL_PREFIX,
+  DocUpdatePayload,
+  PRESENCE_CHANNEL_PREFIX,
+  PresencePayload,
+  PresenceUser,
+  RealtimeNotifierService,
+} from './../realtime/realtime-notified.service';
 import { UUID } from 'node:crypto';
 
 interface AccessTokenPayload {
@@ -22,6 +31,42 @@ interface AccessTokenPayload {
 }
 
 type PushPayload = [{ id: UUID; documentId: string; update: number }];
+
+// Token bucket for per (userId, documentId) sync-update backpressure.
+// KEYS[1] = bucket key, ARGV = [capacity, refillPerSec, nowMs, ttlSec]
+// ponytail: fixed capacity/refill, no per-user tuning; revisit if abuse patterns vary by user
+const RATE_LIMIT_SCRIPT = `
+local tokens = tonumber(redis.call('HGET', KEYS[1], 'tokens'))
+local ts = tonumber(redis.call('HGET', KEYS[1], 'ts'))
+local capacity = tonumber(ARGV[1])
+local refillPerSec = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+
+if tokens == nil then
+  tokens = capacity
+  ts = now
+end
+
+tokens = math.min(capacity, tokens + ((now - ts) / 1000) * refillPerSec)
+
+local allowed = 0
+if tokens >= 1 then
+  tokens = tokens - 1
+  allowed = 1
+end
+
+redis.call('HSET', KEYS[1], 'tokens', tokens, 'ts', now)
+redis.call('EXPIRE', KEYS[1], ttl)
+return allowed
+`;
+export const RATE_LIMIT_CAPACITY = 20; // burst size, in ops
+export const RATE_LIMIT_REFILL_PER_SEC = 10; // steady-state ops/sec
+const RATE_LIMIT_KEY_TTL_SEC = 60;
+
+// Compact ops into a snapshot roughly every N ops per document.
+// ponytail: fixed cadence, no adaptive sizing
+export const SNAPSHOT_EVERY_N_OPS = 50;
 @WebSocketGateway({ cors: { origin: '*' } })
 export class SyncGateway
   implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
@@ -31,8 +76,10 @@ export class SyncGateway
 
   constructor(
     @Inject(REDIS_SUB_CLIENT) private readonly subClient: Redis,
+    @Inject(REDIS_PUB_CLIENT) private readonly pubClient: Redis,
     private readonly jwtService: JwtService,
     private prisma: PrismaService,
+    private readonly realtimeNotifier: RealtimeNotifierService,
   ) {}
 
   async onModuleInit() {
@@ -41,6 +88,12 @@ export class SyncGateway
 
     await this.subClient.subscribe(DEVICE_REVOKED_CHANNEL);
     console.log('Subscribed to channel:', DEVICE_REVOKED_CHANNEL);
+
+    await this.subClient.psubscribe(`${DOC_UPDATE_CHANNEL_PREFIX}*`);
+    console.log('Subscribed to pattern:', `${DOC_UPDATE_CHANNEL_PREFIX}*`);
+
+    await this.subClient.psubscribe(`${PRESENCE_CHANNEL_PREFIX}*`);
+    console.log('Subscribed to pattern:', `${PRESENCE_CHANNEL_PREFIX}*`);
 
     this.subClient.on('error', (err) =>
       console.error('Redis sub client error:', err),
@@ -55,6 +108,32 @@ export class SyncGateway
       const socket = this.deviceSocketMap.get(message);
       if (socket) {
         socket.disconnect(true);
+      }
+    });
+
+    // Fan-out for document ops published by any gateway instance (including
+    // this one) on doc:<documentId>. Every instance re-emits to its own
+    // locally-connected sockets in that document's room, excluding the
+    // socket that originated the op so it isn't echoed back to itself.
+    this.subClient.on('pmessage', (_pattern, channel, message) => {
+      if (channel.startsWith(DOC_UPDATE_CHANNEL_PREFIX)) {
+        const documentId = channel.slice(DOC_UPDATE_CHANNEL_PREFIX.length);
+        const { update, senderSocketId } = JSON.parse(
+          message,
+        ) as DocUpdatePayload;
+
+        this.server
+          .to(documentId)
+          .except(senderSocketId)
+          .emit('sync-update', update);
+        return;
+      }
+
+      // Presence fan-out: every instance re-emits the current viewer list to
+      // its own locally-connected sockets in that document's room.
+      if (channel.startsWith(PRESENCE_CHANNEL_PREFIX)) {
+        const payload = JSON.parse(message) as PresencePayload;
+        this.server.to(payload.documentId).emit('presence', payload);
       }
     });
   }
@@ -91,7 +170,7 @@ export class SyncGateway
     }
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     // Nothing to do here for room cleanup — why? (you already answered this above)
     // This hook is still useful for things like presence/logging later.
 
@@ -99,6 +178,8 @@ export class SyncGateway
     if (client === this.deviceSocketMap.get(deviceId)) {
       this.deviceSocketMap.delete(client.data.deviceId);
     }
+
+    await this.removePresence(client);
   }
 
   @SubscribeMessage('join-room')
@@ -119,6 +200,33 @@ export class SyncGateway
     }
 
     await client.join(data.documentId);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { firstName: true, lastName: true },
+    });
+    if (!user) return;
+
+    await this.pubClient.hset(
+      `${PRESENCE_CHANNEL_PREFIX}${data.documentId}`,
+      client.id,
+      JSON.stringify({
+        userId,
+        socketId: client.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+      }),
+    );
+
+    const joinedDocumentIds: Set<string> = (client.data.presenceDocumentIds ??=
+      new Set<string>());
+    joinedDocumentIds.add(data.documentId);
+
+    // Fan out to every other connected client via Redis (cross-instance, same
+    // pattern as doc:* sync-update), and ack the joining client directly so
+    // it doesn't have to wait on its own pub/sub round-trip.
+    const users = await this.publishPresence(data.documentId);
+    client.emit('presence', { documentId: data.documentId, users });
   }
 
   @SubscribeMessage('sync-update')
@@ -141,6 +249,11 @@ export class SyncGateway
       return;
     }
 
+    // Backpressure: a client sending ops faster than its token bucket
+    // refills gets this op dropped instead of persisted + fanned out.
+    const allowed = await this.checkRateLimit(userId, data.documentId);
+    if (!allowed) return;
+
     // TODO 3: persist the update — insert a new DocumentOp row with the raw bytes
     //         (you'll need to know DocumentOp's exact field names — check schema.prisma)
     const documentOp = await this.prisma.documentOp.create({
@@ -152,7 +265,120 @@ export class SyncGateway
     });
 
     // TODO 4: broadcast to everyone else in the room, excluding the sender
-    client.to(data.documentId).emit('sync-update', data.update);
+    // Published to Redis (doc:<documentId>) instead of an in-process
+    // client.to(room).emit so other gateway instances see it too; this
+    // instance's own sockets get it back via the pmessage handler above.
+    await this.realtimeNotifier.notifyDocumentUpdate(data.documentId, {
+      update: data.update,
+      senderSocketId: client.id,
+    });
+
+    await this.maybeSnapshotDocument(data.documentId);
+  }
+
+  // Reads the current viewer list for a document out of the presence hash
+  // and publishes it on presence:<documentId> (cross-instance, same pattern
+  // as doc:* sync-update), which the pmessage handler re-emits to the room.
+  private async publishPresence(documentId: string): Promise<PresenceUser[]> {
+    const raw = await this.pubClient.hgetall(
+      `${PRESENCE_CHANNEL_PREFIX}${documentId}`,
+    );
+    const users: PresenceUser[] = Object.values(raw).map((entry) => {
+      const { userId, firstName, lastName } = JSON.parse(entry);
+      return { userId, firstName, lastName };
+    });
+
+    await this.realtimeNotifier.notifyPresenceUpdate(documentId, {
+      documentId,
+      users,
+    });
+
+    return users;
+  }
+
+  // Removes this socket's presence entry from every document it had joined
+  // (crashed/closed client cleanup) and re-broadcasts the updated list for
+  // each. Never throws — presence cleanup must not break disconnect handling.
+  private async removePresence(client: Socket): Promise<void> {
+    const documentIds: Set<string> | undefined =
+      client.data.presenceDocumentIds;
+    if (!documentIds) return;
+
+    await Promise.all(
+      [...documentIds].map(async (documentId) => {
+        try {
+          await this.pubClient.hdel(
+            `${PRESENCE_CHANNEL_PREFIX}${documentId}`,
+            client.id,
+          );
+          await this.publishPresence(documentId);
+        } catch (error) {
+          console.error('presence cleanup failed for', documentId, error);
+        }
+      }),
+    );
+  }
+
+  // Token bucket per (userId, documentId): true if this op may proceed.
+  private async checkRateLimit(
+    userId: string,
+    documentId: string,
+  ): Promise<boolean> {
+    const key = `ratelimit:sync-update:${userId}:${documentId}`;
+    const allowed = await this.pubClient.eval(
+      RATE_LIMIT_SCRIPT,
+      1,
+      key,
+      RATE_LIMIT_CAPACITY,
+      RATE_LIMIT_REFILL_PER_SEC,
+      Date.now(),
+      RATE_LIMIT_KEY_TTL_SEC,
+    );
+    return allowed === 1;
+  }
+
+  // If a document has accumulated SNAPSHOT_EVERY_N_OPS ops since its last
+  // snapshot, replay (prior snapshot + those ops) into a Yjs doc and store
+  // the compacted result as the new snapshot. Never throws — snapshotting
+  // is bookkeeping and must not break the real-time path.
+  // ponytail: two instances can race past the threshold at once and both
+  // write a snapshot; harmless (load always uses the latest by seq), add a
+  // Redis lock here if duplicate snapshots become a volume problem.
+  private async maybeSnapshotDocument(documentId: string): Promise<void> {
+    try {
+      const latestSnapshot = await this.prisma.documentSnapshot.findFirst({
+        where: { documentId },
+        orderBy: { seq: 'desc' },
+        select: { stateBytes: true, seq: true },
+      });
+      const sinceSeq = latestSnapshot?.seq ?? BigInt(0);
+
+      const opsSinceSnapshot = await this.prisma.documentOp.findMany({
+        where: { documentId, seq: { gt: sinceSeq } },
+        select: { update: true, seq: true },
+        orderBy: { seq: 'asc' },
+      });
+
+      if (opsSinceSnapshot.length < SNAPSHOT_EVERY_N_OPS) return;
+
+      const doc = new Doc();
+      if (latestSnapshot) {
+        applyUpdate(doc, new Uint8Array(latestSnapshot.stateBytes));
+      }
+      for (const op of opsSinceSnapshot) {
+        applyUpdate(doc, new Uint8Array(op.update));
+      }
+
+      await this.prisma.documentSnapshot.create({
+        data: {
+          documentId,
+          stateBytes: new Uint8Array(encodeStateAsUpdate(doc)),
+          seq: opsSinceSnapshot[opsSinceSnapshot.length - 1].seq,
+        },
+      });
+    } catch (error) {
+      console.error('snapshot compaction failed for', documentId, error);
+    }
   }
 
   @SubscribeMessage('pull')
@@ -165,11 +391,21 @@ export class SyncGateway
     },
     @ConnectedSocket() client: Socket,
   ) {
+    // If a snapshot exists ahead of what the client has already seen, it
+    // replaces full history from seq 0: reply with it plus only the ops
+    // after its seq, instead of every op for the document.
+    const snapshot = await this.prisma.documentSnapshot.findFirst({
+      where: { documentId: data.documentId, seq: { gt: data.lastSeenSeq } },
+      select: { stateBytes: true, seq: true },
+      orderBy: { seq: 'desc' },
+    });
+    const sinceSeq = snapshot?.seq ?? data.lastSeenSeq;
+
     const updates = await this.prisma.documentOp.findMany({
       where: {
         documentId: data.documentId,
         seq: {
-          gt: data.lastSeenSeq,
+          gt: sinceSeq,
         },
       },
       select: {
@@ -184,6 +420,7 @@ export class SyncGateway
     });
 
     client.emit('pull', {
+      snapshot,
       ops: updates.slice(0, 500),
       hasMore: updates.length > 500,
     });
@@ -206,6 +443,7 @@ export class SyncGateway
     });
     const authorizedIds = new Set(authorizedDocs.map((d) => d.id));
     const result: any = { success: [], fail: [] };
+    const touchedDocumentIds = new Set<string>();
 
     await Promise.all(
       data.map(async (element) => {
@@ -226,6 +464,7 @@ export class SyncGateway
               documentId: element.documentId,
             },
           });
+          touchedDocumentIds.add(element.documentId);
 
           result.success.push({
             id: documentOp.id,
@@ -248,6 +487,12 @@ export class SyncGateway
           }
         }
       }),
+    );
+
+    await Promise.all(
+      [...touchedDocumentIds].map((documentId) =>
+        this.maybeSnapshotDocument(documentId),
+      ),
     );
 
     client.emit('push', result);

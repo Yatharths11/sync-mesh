@@ -8,12 +8,27 @@ function initDb(): void {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			documentId TEXT NOT NULL,
 			content BLOB NOT NULL,
-			createdAt INTEGER NOT NULL
+			createdAt INTEGER NOT NULL,
+			opId TEXT NOT NULL
 		);
 	`);
 
   db.execute(`
 		CREATE INDEX IF NOT EXISTS idx_pending_ops_document ON pending_ops (documentId, id);
+	`);
+
+  db.execute(`
+		CREATE TABLE IF NOT EXISTS document_sync_state (
+			documentId TEXT PRIMARY KEY,
+			lastSeenSeq INTEGER NOT NULL DEFAULT 0
+		);
+	`);
+
+  db.execute(`
+		CREATE TABLE IF NOT EXISTS app_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
 	`);
 }
 

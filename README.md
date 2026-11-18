@@ -48,9 +48,14 @@ This is a work in progress, updated honestly as I go — not backdated to look f
 - [x] WebSocket gateway: manual per-connection JWT verification, per-document room authorization
 - [x] CRDT convergence: Yjs integrated; 5-scenario Jest suite passing (concurrent inserts, concurrent delete+insert, out-of-order delivery, idempotency, three-way divergence)
 - [x] Cross-instance **session revocation** fan-out via Redis pub/sub
-- [ ] Offline queue + reconnect sync protocol — server-side `pull`/`push` handlers done; client-side drain/pull loops in progress
-- [ ] Two-device airplane-mode convergence demo
-- [ ] Cross-instance **CRDT op broadcast** via Redis pub/sub (currently single-instance only — this is the next major piece, not an afterthought)
+- [x] `GET /auth/devices` — list a user's devices and their revocation status
+- [x] Documents API (`POST/GET /documents`, `GET /documents/:id`) with editor-based authorization
+- [x] Cross-instance **CRDT op broadcast** via Redis pub/sub — `sync-update` ops fan out to every gateway instance, not just the one the sender is connected to
+- [x] Per-(user, document) token-bucket rate limiting on `sync-update`
+- [x] Append-only op log compaction — periodic `DocumentSnapshot` rows so reconnect/pull doesn't replay the full op history
+- [x] Client Yjs + socket wiring (`CollaborativeTextInput`) driving a shared `Y.Doc` over the gateway's `sync-update`/`pull`/`push` events
+- [x] Client offline queue — SQLite-backed (`op-sqlite`) pending-ops table, drained on reconnect
+- [ ] Two-device airplane-mode convergence demo (see below for how to run it — recording it is still a manual step)
 
 ## Running locally
 
@@ -78,6 +83,44 @@ npx react-native run-android   # or run-ios
 cd syncmesh-backend
 npm run test   # Yjs CRDT convergence suite
 ```
+
+## Running the two-device airplane-mode demo
+
+This is the demo the "claim this repo backs up" line at the top refers to:
+two clients, both offline, converging without a server round-trip.
+
+**1. Start two backend instances** (so the demo is actually exercising
+cross-instance Redis fan-out, not one process talking to itself):
+
+```bash
+cd syncmesh-backend
+npm run start:dev           # instance A on PORT 3000 (default)
+npm run start:dev:replica   # instance B on PORT 3001, separate terminal
+```
+
+Both need to point at the same Postgres and Redis (`docker compose up -d`
+first if they aren't already running).
+
+**2. Run the RN app on two simulators/devices**, one pointed at instance A's
+port, the other at instance B's — e.g. via env var / Metro config, however
+the client currently resolves its API base URL. Log in as two different
+users (or the same user, two devices) who are both editors of the same
+document, and open that document on both.
+
+**3. Demo the convergence:**
+
+- With both devices online, confirm edits on one show up on the other
+  (proves the baseline gateway + fan-out path works).
+- Put both devices in airplane mode.
+- Edit the document independently and differently on each device.
+- Take both devices off airplane mode.
+- Expect: each device's offline queue drains (`push`), each pulls the ops it
+  missed (`pull`), and the Yjs CRDT merge resolves the two independent edits
+  into the same final document on both devices — no manual conflict
+  resolution, no last-write-wins.
+
+Recording the actual demo video is a manual step for the project owner, not
+something this write-up can generate.
 
 ## Design decisions worth asking about
 

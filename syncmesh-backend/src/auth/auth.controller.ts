@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
@@ -44,6 +45,12 @@ export class AuthController {
       dto.deviceId,
       dto.presentedRefreshToken,
     );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('devices')
+  async listDevices(@Req() req) {
+    return this.authService.listDevices(req.user.userId);
   }
 
   @UseGuards(JwtAuthGuard)

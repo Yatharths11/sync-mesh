@@ -9,6 +9,16 @@ const lightColors = {
   accent: '#2F6FED',
   accentText: '#FFFFFF',
   placeholder: '#B0AFAC',
+  success: '#2E9B5A',
+  danger: '#D14343',
+  avatarPalette: [
+    '#2F6FED',
+    '#2E9B5A',
+    '#C9872F',
+    '#8457D6',
+    '#D14343',
+    '#2F9B9B',
+  ],
 };
 
 const darkColors = {
@@ -20,6 +30,16 @@ const darkColors = {
   accent: '#5B93FF',
   accentText: '#0B0B0B',
   placeholder: '#5C5C5A',
+  success: '#4FBE7C',
+  danger: '#E5736B',
+  avatarPalette: [
+    '#5B93FF',
+    '#4FBE7C',
+    '#E0A959',
+    '#A687E8',
+    '#E5736B',
+    '#56BCBC',
+  ],
 };
 
 export const spacing = {

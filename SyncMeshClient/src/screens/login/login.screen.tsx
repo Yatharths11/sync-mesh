@@ -8,11 +8,13 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  View,
 } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import { login } from '../../apis/auth.api';
 import * as Keychain from 'react-native-keychain';
 import { useAuthStore } from '../../store/store';
+import { useTheme } from '../../theme';
 
 // UI-ONLY SCREEN. No auth logic lives here.
 // Yatharth: implement handleSubmit yourself — this is where you'll:
@@ -23,6 +25,8 @@ import { useAuthStore } from '../../store/store';
 //   5. On failure, setError(...) with a user-facing message
 
 export default function LoginScreen() {
+  const { colors, spacing, radius, typography } = useTheme();
+  const styles = createStyles(colors, spacing, radius, typography);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -34,7 +38,7 @@ export default function LoginScreen() {
     mutationKey: ['login'],
     onSuccess: async data => {
       try {
-        await Keychain.setGenericPassword('refreshToken', data.refreshToken, {
+        await Keychain.setGenericPassword(data.deviceId, data.refreshToken, {
           service: 'refreshToken',
         });
         setAccessToken(data.accessToken);
@@ -61,92 +65,114 @@ export default function LoginScreen() {
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        placeholderTextColor="#8A8A8E"
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-        editable={!loginMutation.isPending}
-      />
+      <View style={styles.card}>
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          placeholderTextColor={colors.placeholder}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+          editable={!loginMutation.isPending}
+        />
 
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        placeholderTextColor="#8A8A8E"
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-        editable={!loginMutation.isPending}
-      />
+        <TextInput
+          style={styles.input}
+          placeholder="Password"
+          placeholderTextColor={colors.placeholder}
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+          editable={!loginMutation.isPending}
+        />
 
-      <TouchableOpacity
-        style={[
-          styles.button,
-          loginMutation.isPending && styles.buttonDisabled,
-        ]}
-        onPress={handleSubmit}
-        disabled={loginMutation.isPending}
-      >
-        {loginMutation.isPending ? (
-          <ActivityIndicator color="#FFFFFF" />
-        ) : (
-          <Text style={styles.buttonText}>Log In</Text>
-        )}
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.button,
+            loginMutation.isPending && styles.buttonDisabled,
+          ]}
+          onPress={handleSubmit}
+          disabled={loginMutation.isPending}
+          activeOpacity={0.75}
+        >
+          {loginMutation.isPending ? (
+            <ActivityIndicator color={colors.accentText} />
+          ) : (
+            <Text style={styles.buttonText}>Log In</Text>
+          )}
+        </TouchableOpacity>
+      </View>
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    backgroundColor: '#FFFFFF',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 15,
-    color: '#6B6B70',
-    textAlign: 'center',
-    marginBottom: 32,
-  },
-  errorText: {
-    color: '#D92D20',
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#D9D9DE',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    marginBottom: 14,
-  },
-  button: {
-    backgroundColor: '#1A1A1E',
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-});
+function createStyles(
+  colors: ReturnType<typeof useTheme>['colors'],
+  spacing: ReturnType<typeof useTheme>['spacing'],
+  radius: ReturnType<typeof useTheme>['radius'],
+  typography: ReturnType<typeof useTheme>['typography'],
+) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.lg,
+      backgroundColor: colors.background,
+    },
+    title: {
+      ...typography.title,
+      textAlign: 'center',
+      color: colors.textPrimary,
+      marginBottom: spacing.xs,
+    },
+    subtitle: {
+      ...typography.body,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginBottom: spacing.xl,
+    },
+    errorText: {
+      ...typography.caption,
+      color: colors.danger,
+      textAlign: 'center',
+      marginBottom: spacing.md,
+    },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      padding: spacing.lg,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 6,
+      elevation: 3,
+    },
+    input: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.sm,
+      backgroundColor: colors.background,
+      color: colors.textPrimary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm + 4,
+      fontSize: typography.body.fontSize,
+      marginBottom: spacing.sm + 6,
+    },
+    button: {
+      backgroundColor: colors.accent,
+      borderRadius: radius.sm,
+      paddingVertical: spacing.md,
+      alignItems: 'center',
+      marginTop: spacing.sm,
+    },
+    buttonDisabled: {
+      opacity: 0.6,
+    },
+    buttonText: {
+      ...typography.body,
+      color: colors.accentText,
+      fontWeight: '600',
+    },
+  });
+}
